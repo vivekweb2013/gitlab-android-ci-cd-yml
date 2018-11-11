@@ -73,15 +73,13 @@ lint:
 
 build_debug:
   extends: .build_template
-  only:
-    - develop
   script:
     - ./gradlew assembleDebug
 
 build_release:
   extends: .build_template
   only:
-    - master
+    - /^release-.*$/
   script:
     - ./gradlew assembleRelease
 
