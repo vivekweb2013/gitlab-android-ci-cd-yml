@@ -1,0 +1,96 @@
+image: openjdk:8-jdk
+
+variables:
+  ANDROID_SDK_TOOLS: "4333796"
+
+before_script:
+  - apt-get --quiet update --yes
+  - apt-get --quiet install --yes wget tar unzip lib32stdc++6 lib32z1
+
+  # Extract the SDK version from build.gradle file
+  - export ANDROID_COMPILE_SDK=`egrep '^[[:blank:]]+compileSdkVersion'  app/build.gradle | awk '{print $2}'`
+
+  # Extract the Build Tools version from build.gradle file
+  - export ANDROID_BUILD_TOOLS=`egrep '^[[:blank:]]+buildToolsVersion' app/build.gradle | awk '{print $2}' | sed s/\'//g`
+
+  # Extract version info
+  - export VERSION_NAME=`egrep '^[[:blank:]]+versionName[[:blank:]]'  app/build.gradle | awk '{print $2}' | sed s/\"//g`
+  - export VERSION_CODE=`egrep '^[[:blank:]]+versionCode[[:blank:]]'  app/build.gradle | awk '{print $2}'`
+
+  # Explict output for logging purpose only
+  - echo $ANDROID_SDK_TOOLS
+  - echo $ANDROID_BUILD_TOOLS
+  - echo $ANDROID_COMPILE_SDK
+  - echo $VERSION_NAME
+  - echo $VERSION_CODE
+  - touch ./info.txt
+  - echo "Build Date          $(date)"                >> ./info.txt
+  - echo "App Version Name    ${VERSION_NAME}"        >> ./info.txt
+  - echo "App Version Code    ${VERSION_CODE}"        >> ./info.txt
+  - echo "Git Branch          ${CI_COMMIT_REF_NAME}"  >> ./info.txt
+  - echo "Git Commit          ${CI_COMMIT_SHA}"       >> ./info.txt
+  - echo "GitLab Pipeline     ${CI_PIPELINE_ID}"      >> ./info.txt
+
+  # Download and extract SDK tools
+  - wget --quiet --output-document=android-sdk.zip https://dl.google.com/android/repository/sdk-tools-linux-${ANDROID_SDK_TOOLS}.zip
+  - unzip -d android-sdk-linux android-sdk.zip >/dev/null
+
+  # Set up environment
+  - echo y | android-sdk-linux/tools/bin/sdkmanager "platforms;android-${ANDROID_COMPILE_SDK}" >/dev/null
+  - echo y | android-sdk-linux/tools/bin/sdkmanager "platform-tools" >/dev/null
+  - echo y | android-sdk-linux/tools/bin/sdkmanager "build-tools;${ANDROID_BUILD_TOOLS}" >/dev/null
+  - export ANDROID_HOME=$PWD/android-sdk-linux
+  - export PATH=$PATH:$PWD/android-sdk-linux/platform-tools/
+  - chmod +x ./gradlew
+
+  # temporarily disable checking for EPIPE error and use yes to accept all licenses
+  - set +o pipefail
+  - yes | android-sdk-linux/tools/bin/sdkmanager --licenses >/dev/null
+  - set -o pipefail
+
+stages:
+  - build
+  - test
+
+####################################################################################################
+# BUILD                                                                                            #
+####################################################################################################
+
+.build_template:
+  stage: build
+  artifacts:
+    expire_in: 12 hours
+    paths:
+      - app/build/outputs/
+  after_script:
+    - cp info.txt ./app/build/outputs/
+
+
+lint:
+  extends: .build_template
+  script:
+    - ./gradlew -Pci --console=plain -PbuildDir=build/outputs/lint lint
+
+build_debug:
+  extends: .build_template
+  only:
+    - develop
+  script:
+    - ./gradlew assembleDebug
+
+build_release:
+  extends: .build_template
+  only:
+    - master
+  script:
+    - ./gradlew assembleRelease
+
+
+####################################################################################################
+# UNIT TESTING                                                                                     #
+####################################################################################################
+
+unit_test:
+  stage: test
+  script:
+    - ./gradlew -Pci --console=plain test
